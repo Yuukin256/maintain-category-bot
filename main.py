@@ -1,6 +1,7 @@
 from datetime import date
 
 import pywikibot
+from dateutil.relativedelta import relativedelta
 from pywikibot import editor as editarticle
 from pywikibot.tools.formatter import color_format
 
@@ -38,7 +39,7 @@ class YearCategory(pywikibot.Category):
 
     def make_newtext(self):
         text = '{{Hiddencat}}\n'
-        text += '{{前後年月カテゴリ}}\n'
+        text += f'{{{{前後年月カテゴリ|前年={self.year - 2}年|前月={self.year - 1}年|後月={self.year + 1}年|後年={self.year + 2}年}}}}\n'
         for c in self.parent_cats:
             text += f'[[{c}]]\n'
 
@@ -47,11 +48,11 @@ class YearCategory(pywikibot.Category):
 
 class MonthCategory(pywikibot.Category):
     def __init__(self, base: BaseCategory, year: int, month: int):
-        self.year = year
-        self.month = month
         self.basecat = base
+        self.date = date(year, month, 1)
         self.newtext = ''
-        self.parent_cats = [p.format(year=year, month=month, zfill_month=str(month).zfill(2)) for p in base.month_cats_parent]
+        self.parent_cats = [p.format(year=year, month=month, zfill_month=str(month).zfill(2))
+                            for p in base.month_cats_parent]
 
         super(MonthCategory, self).__init__(base.site, f'{base.title}{base.name_date_sep}{year}年{month}月')
 
@@ -62,7 +63,12 @@ class MonthCategory(pywikibot.Category):
 
     def make_newtext(self) -> None:
         text = '{{Hiddencat}}\n'
-        text += '{{前後年月カテゴリ}}\n'
+        prev_year = self.date - relativedelta(years=1, months=1)
+        prev_month = self.date - relativedelta(months=1)
+        next_month = self.date + relativedelta(months=1)
+        next_year = self.date + relativedelta(years=1, months=1)
+        text += f'{{{{前後年月カテゴリ|前年={prev_year.year}年|前月={prev_month.year}年{prev_month.month}月'\
+            f'|当年={self.date.year}年|後月={next_month.year}年{next_month.month}月|後年={next_year.year}年}}}}\n'
         for c in self.parent_cats:
             text += f'[[{c}]]\n'
 
@@ -143,7 +149,7 @@ def main():
         for page in children:
             post(page)
 
-        choice = pywikibot.input_choice(f'{parent.title()}関連の整備が完了しました。他のカテゴリで続行しますか', [('はい', 'y'), ('いいえ', 'n')])
+        choice = pywikibot.input_choice(f'[[{parent.title()}]] 関連の整備が完了しました。他のカテゴリで続行しますか', [('はい', 'y'), ('いいえ', 'n')])
         if choice == 'y':
             continue
         if choice == 'n':
