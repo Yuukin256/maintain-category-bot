@@ -1,4 +1,5 @@
 from datetime import date
+from queue import Queue
 
 import pywikibot
 from dateutil.relativedelta import relativedelta
@@ -7,7 +8,22 @@ from pywikibot.tools.formatter import color_format
 
 
 class BaseCategory():
+    """
+    基幹のカテゴリ
+
+    Returns:
+        str: カテゴリの名前
+    """
     def __init__(self, site: pywikibot.Site, title: str, month_parent=None, year_parent=None, seperater='/', toc=None):
+        """
+        Args:
+            site (pywikibot.Site): サイト
+            title (str): カテゴリの名前
+            month_parent ([type], optional): 月ごとに分類するカテゴリの親カテゴリ (Defaults to None.)
+            year_parent ([type], optional): 年ごとに分類するカテゴリの親カテゴリ (Defaults to None.)
+            seperater (str, optional): カテゴリ名のタイトルと年月の区切り (Defaults to '/'.)
+            toc ([type], optional): 目次 (Defaults to None.)
+        """
         self.site = site
         self.title = title
         self.name_date_sep = seperater
@@ -25,19 +41,19 @@ class BaseCategory():
 
 class YearCategory(pywikibot.Category):
     def __init__(self, base: BaseCategory, year: int):
-        self.year = year
         self.basecat = base
+        self.year = year
         self.newtext = ''
         self.parent_cats = [p.format(year=year) for p in base.year_cats_parent]
 
         super(YearCategory, self).__init__(base.site, f'{base.title}{base.name_date_sep}{year}年')
 
-    def get_newtext(self):
+    def get_newtext(self) -> str:
         if not self.newtext:
             self.make_newtext()
         return self.newtext
 
-    def make_newtext(self):
+    def make_newtext(self) -> None:
         text = '{{Hiddencat}}\n'
         text += f'{{{{前後年月カテゴリ|前年={self.year - 2}年|前月={self.year - 1}年|後月={self.year + 1}年|後年={self.year + 2}年}}}}\n'
         for c in self.parent_cats:
@@ -56,7 +72,7 @@ class MonthCategory(pywikibot.Category):
 
         super(MonthCategory, self).__init__(base.site, f'{base.title}{base.name_date_sep}{year}年{month}月')
 
-    def get_newtext(self):
+    def get_newtext(self) -> str:
         if not self.newtext:
             self.make_newtext()
         return self.newtext
@@ -75,68 +91,92 @@ class MonthCategory(pywikibot.Category):
         self.newtext = text
 
 
-def make_list(site: pywikibot.Site) -> tuple:
-    base_categories = [BaseCategory(site, 'Category:Wikifyが必要な項目'),
-                       BaseCategory(site, 'Category:外部リンクがリンク切れになっている記事'),
-                       BaseCategory(site, 'Category:雑多な内容を箇条書きした節のある記事', seperater=' - '),
-                       BaseCategory(site, 'Category:出典を必要とする記事',
-                                    toc='{{CategoryTOC3\n||人|タグに没年記入ありの人物記事|\n||音|音楽作品に関する記事|\n}}'),
-                       BaseCategory(site, 'Category:出典を必要とする記述のある記事',
-                                    'Category:出典を必要とする記事/{year}年{month}月|***',
-                                    'Category:出典を必要とする記事|****',
-                                    toc='{{CategoryTOC3}}'),
-                       BaseCategory(site, 'Category:出典を必要とする存命人物記事',
-                                    'Category:出典を必要とする記事/{year}年{month}月|**そんめい',
-                                    'Category:出典を必要とする記事|***そんめい',
-                                    toc='{{CategoryTOC3}}'),
-                       BaseCategory(site, 'Category:出典皆無な存命人物記事',
-                                    'Category:出典を必要とする存命人物記事/{year}年{month}月|*',
-                                    'Category:出典を必要とする存命人物記事/{year}年|*',
-                                    toc='{{CategoryTOC3}}'),
-                       BaseCategory(site, 'Category:独自研究の除去が必要な記事',
-                                    'Category:出典を必要とする記事/{year}年{month}月|*とくしけんきゆう'),
-                       BaseCategory(site, 'Category:特筆性の基準を満たしていないおそれのある記事',
-                                    'Category:出典を必要とする記事/{year}年{month}月|*とくひつせい')]
+class MaintainCategoryRobot(pywikibot.Bot):
+    def __init__(self, site):
+        super(MaintainCategoryRobot, self).__init__(site)
 
-    basecat = pywikibot.bot.input_list_choice('カテゴリを選択', base_categories)
-    pywikibot.output(f'「{basecat}」を選択')
+        self.changed_pages = 0
+        self._pending_processed_titles = Queue()
 
-    year = 0
-    while True:
-        year = int(pywikibot.input('年を入力'))
-        if year > date.today().year or year < 2010:
-            pywikibot.output('有効な年を入力してください')
+    def _async_callback(self, page, err):
+        if not isinstance(err, Exception):
+            self.changed_pages += 1
+            self._pending_processed_titles.put((page.title(as_link=True), True))
         else:
-            break
+            self._pending_processed_titles.put((page.title(as_link=True), False))
 
-    parent = YearCategory(basecat, year)
-    children = [MonthCategory(basecat, year, m) for m in range(1, 13)]
+    def make_list(self) -> None:
+        base_categories = [BaseCategory(self.site, 'Category:Wikifyが必要な項目'),
+                           BaseCategory(self.site, 'Category:外部リンクがリンク切れになっている記事'),
+                           BaseCategory(self.site, 'Category:雑多な内容を箇条書きした節のある記事', seperater=' - '),
+                           BaseCategory(self.site, 'Category:出典を必要とする記事',
+                                        toc='{{CategoryTOC3\n||人|タグに没年記入ありの人物記事|\n||音|音楽作品に関する記事|\n}}'),
+                           BaseCategory(self.site, 'Category:出典を必要とする記述のある記事',
+                                        'Category:出典を必要とする記事/{year}年{month}月|***',
+                                        'Category:出典を必要とする記事|****',
+                                        toc='{{CategoryTOC3}}'),
+                           BaseCategory(self.site, 'Category:出典を必要とする存命人物記事',
+                                        'Category:出典を必要とする記事/{year}年{month}月|**そんめい',
+                                        'Category:出典を必要とする記事|***そんめい',
+                                        toc='{{CategoryTOC3}}'),
+                           BaseCategory(self.site, 'Category:出典皆無な存命人物記事',
+                                        'Category:出典を必要とする存命人物記事/{year}年{month}月|*',
+                                        'Category:出典を必要とする存命人物記事/{year}年|*',
+                                        toc='{{CategoryTOC3}}'),
+                           BaseCategory(self.site, 'Category:独自研究の除去が必要な記事',
+                                        'Category:出典を必要とする記事/{year}年{month}月|*とくしけんきゆう'),
+                           BaseCategory(self.site, 'Category:特筆性の基準を満たしていないおそれのある記事',
+                                        'Category:出典を必要とする記事/{year}年{month}月|*とくひつせい')]
 
-    return parent, children
+        basecat = pywikibot.bot.input_list_choice('カテゴリを選択', base_categories)
+        pywikibot.output(f'「{basecat}」を選択')
 
+        year = 0
+        while True:
+            year = int(pywikibot.input('年を入力'))
+            if year > date.today().year or year < 2010:
+                pywikibot.output('有効な年を入力してください')
+            else:
+                break
 
-def post(page: pywikibot.Category) -> bool:
-    original_text = page.text
-    new_text = page.get_newtext()
+        self.parent = YearCategory(basecat, year)
+        self.children = [MonthCategory(basecat, year, m) for m in range(1, 13)]
 
-    while True:
-        pywikibot.output(color_format(
-            '\n\n>>> {lightpurple}{0}{default} <<<', page.title()))
-        pywikibot.showDiff(original_text, new_text)
-        choice = pywikibot.input_choice('この変更を投稿しますか', [('はい', 'y'), ('いいえ', 'n'), ('エディタで編集する', 'e')])
+    def run(self) -> None:
+        self._post(self.parent)
+        for page in self.children:
+            self._post(page)
 
-        if choice == 'n':
-            return False
-        if choice == 'e':
-            editor = editarticle.TextEditor()
-            as_edited = editor.edit(new_text)
-            if as_edited:
-                new_text = as_edited
-            continue
-        if choice == 'y':
-            page.text = new_text
-            page.save('Botによる: [[User:YuukinBot#作業内容2|カテゴリの整備]]')
-            return True
+        pywikibot.output(f'{self.changed_pages} ページ編集しました')
+        pywikibot.output(f'{self.parent.title(as_link=True)} 関連の整備が完了しました')
+
+    def _post(self, page):
+        original_text = page.text
+        new_text = page.get_newtext()
+
+        while True:
+            pywikibot.output(color_format(
+                '\n\n>>> {lightpurple}{0}{default} <<<', page.title()))
+            pywikibot.showDiff(original_text, new_text)
+            choice = pywikibot.input_choice('この変更を投稿しますか', [('はい', 'y'), ('いいえ', 'n'), ('エディタで編集する', 'e')])
+            if choice == 'n':
+                return False
+            if choice == 'e':
+                editor = editarticle.TextEditor()
+                as_edited = editor.edit(new_text)
+                if as_edited:
+                    new_text = as_edited
+                continue
+            if choice == 'y':
+                page.text = new_text
+                page.save(
+                    'Botによる: [[User:YuukinBot#作業内容2|カテゴリの整備]]',
+                    asynchronous=True,
+                    callback=self._async_callback,
+                    quiet=True)
+            while not self._pending_processed_titles.empty():
+                proc_title, res = self._pending_processed_titles.get()
+                pywikibot.output('{0}{1}'.format(proc_title, 'が投稿されました' if res else 'は投稿されませんでした'))
 
 
 def main():
@@ -144,12 +184,11 @@ def main():
     site.login()
 
     while True:
-        parent, children = make_list(site)
-        post(parent)
-        for page in children:
-            post(page)
+        bot = MaintainCategoryRobot(site)
+        bot.make_list()
+        bot.run()
 
-        choice = pywikibot.input_choice(f'[[{parent.title()}]] 関連の整備が完了しました。他のカテゴリで続行しますか', [('はい', 'y'), ('いいえ', 'n')])
+        choice = pywikibot.input_choice('他のカテゴリで続行しますか', [('はい', 'y'), ('いいえ', 'n')])
         if choice == 'y':
             continue
         if choice == 'n':
