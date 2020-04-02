@@ -95,6 +95,8 @@ class MaintainCategoryRobot(pywikibot.Bot):
     def __init__(self, site):
         super(MaintainCategoryRobot, self).__init__(site)
 
+        self.parent = None
+        self.children = []
         self.changed_pages = 0
         self._pending_processed_titles = Queue()
 
@@ -143,40 +145,41 @@ class MaintainCategoryRobot(pywikibot.Bot):
         self.children = [MonthCategory(basecat, year, m) for m in range(1, 13)]
 
     def run(self) -> None:
-        self._post(self.parent)
-        for page in self.children:
-            self._post(page)
+        pages = self.parent + self.children
+        for page in pages:
+            original_text = page.text
+            new_text = page.get_newtext()
+            if original_text == new_text:
+                break
 
+            while True:
+                pywikibot.output(color_format(
+                    '\n\n>>> {lightpurple}{0}{default} <<<', page.title()))
+                pywikibot.showDiff(original_text, new_text)
+                choice = pywikibot.input_choice('この変更を投稿しますか', [('はい', 'y'), ('いいえ', 'n'), ('エディタで編集する', 'e')])
+                if choice == 'n':
+                    break
+                if choice == 'e':
+                    editor = editarticle.TextEditor()
+                    as_edited = editor.edit(new_text)
+                    if as_edited:
+                        new_text = as_edited
+                    continue
+                if choice == 'y':
+                    page.text = new_text
+                    page.save(
+                        'Botによる: [[User:YuukinBot#作業内容2|カテゴリの整備]]',
+                        asynchronous=True,
+                        callback=self._async_callback,
+                        quiet=True)
+                while not self._pending_processed_titles.empty():
+                    proc_title, res = self._pending_processed_titles.get()
+                    pywikibot.output('{0}{1}'.format(proc_title, 'が投稿されました' if res else 'は投稿されませんでした'))
+                break
+
+        pywikibot.stopme()
         pywikibot.output(f'{self.changed_pages} ページ編集しました')
         pywikibot.output(f'{self.parent.title(as_link=True)} 関連の整備が完了しました')
-
-    def _post(self, page):
-        original_text = page.text
-        new_text = page.get_newtext()
-
-        while True:
-            pywikibot.output(color_format(
-                '\n\n>>> {lightpurple}{0}{default} <<<', page.title()))
-            pywikibot.showDiff(original_text, new_text)
-            choice = pywikibot.input_choice('この変更を投稿しますか', [('はい', 'y'), ('いいえ', 'n'), ('エディタで編集する', 'e')])
-            if choice == 'n':
-                return False
-            if choice == 'e':
-                editor = editarticle.TextEditor()
-                as_edited = editor.edit(new_text)
-                if as_edited:
-                    new_text = as_edited
-                continue
-            if choice == 'y':
-                page.text = new_text
-                page.save(
-                    'Botによる: [[User:YuukinBot#作業内容2|カテゴリの整備]]',
-                    asynchronous=True,
-                    callback=self._async_callback,
-                    quiet=True)
-            while not self._pending_processed_titles.empty():
-                proc_title, res = self._pending_processed_titles.get()
-                pywikibot.output('{0}{1}'.format(proc_title, 'が投稿されました' if res else 'は投稿されませんでした'))
 
 
 def main():
