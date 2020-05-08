@@ -14,6 +14,7 @@ class BaseCategory():
     Returns:
         str: カテゴリの名前
     """
+
     def __init__(self, site: pywikibot.Site, title: str, month_parent=None, year_parent=None, seperater='/', toc=None):
         """
         Args:
@@ -54,8 +55,9 @@ class YearCategory(pywikibot.Category):
         return self.newtext
 
     def make_newtext(self) -> None:
+        next_year = f'{self.year + 2}年' if self.year + 2 < date.today().year else f'<!--{self.year + 2}年-->'
         text = '{{Hiddencat}}\n'
-        text += f'{{{{前後年月カテゴリ|前年={self.year - 2}年|前月={self.year - 1}年|後月={self.year + 1}年|後年={self.year + 2}年}}}}\n'
+        text += f'{{{{前後年月カテゴリ|前年={self.year - 2}年|前月={self.year - 1}年|後月={self.year + 1}年|後年={next_year}}}}}\n'
         for c in self.parent_cats:
             text += f'[[{c}]]\n'
 
@@ -82,9 +84,10 @@ class MonthCategory(pywikibot.Category):
         prev_year = self.date - relativedelta(years=1, months=1)
         prev_month = self.date - relativedelta(months=1)
         next_month = self.date + relativedelta(months=1)
-        next_year = self.date + relativedelta(years=1, months=1)
+        next_year = f'{(self.date + relativedelta(years=1, months=1)).year}年' if self.date.year + \
+            2 < date.today().year else f'<!--{(self.date + relativedelta(years=1, months=1)).year}年-->'
         text += f'{{{{前後年月カテゴリ|前年={prev_year.year}年|前月={prev_month.year}年{prev_month.month}月'\
-            f'|当年={self.date.year}年|後月={next_month.year}年{next_month.month}月|後年={next_year.year}年}}}}\n'
+            f'|当年={self.date.year}年|後月={next_month.year}年{next_month.month}月|後年={next_year}}}}}\n'
         for c in self.parent_cats:
             text += f'[[{c}]]\n'
 
@@ -98,9 +101,11 @@ class MaintainCategoryRobot(pywikibot.Bot):
         self.parent = None
         self.children = []
         self.changed_pages = 0
+        self._pending_processing_titles = Queue()
         self._pending_processed_titles = Queue()
 
     def _async_callback(self, page, err):
+        self._pending_processing_titles.get(page.title(as_link=True))
         if not isinstance(err, Exception):
             self.changed_pages += 1
             self._pending_processed_titles.put((page.title(as_link=True), True))
@@ -145,7 +150,7 @@ class MaintainCategoryRobot(pywikibot.Bot):
         self.children = [MonthCategory(basecat, year, m) for m in range(1, 13)]
 
     def run(self) -> None:
-        pages = self.parent + self.children
+        pages = [self.parent] + self.children
         for page in pages:
             original_text = page.text
             new_text = page.get_newtext()
@@ -172,12 +177,16 @@ class MaintainCategoryRobot(pywikibot.Bot):
                         asynchronous=True,
                         callback=self._async_callback,
                         quiet=True)
+                    self._pending_processing_titles.put(page.title(as_link=True))
                 while not self._pending_processed_titles.empty():
                     proc_title, res = self._pending_processed_titles.get()
                     pywikibot.output('{0}{1}'.format(proc_title, 'が投稿されました' if res else 'は投稿されませんでした'))
                 break
 
-        pywikibot.stopme()
+        while not all((self._pending_processing_titles.empty(), self._pending_processed_titles.empty())):
+            proc_title, res = self._pending_processed_titles.get()
+            pywikibot.output('{0}{1}'.format(proc_title, 'が投稿されました' if res else 'は投稿されませんでした'))
+
         pywikibot.output(f'{self.changed_pages} ページ編集しました')
         pywikibot.output(f'{self.parent.title(as_link=True)} 関連の整備が完了しました')
 
